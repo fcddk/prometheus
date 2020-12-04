@@ -95,10 +95,10 @@ type ChunkQuerier interface {
 type LabelQuerier interface {
 	// LabelValues returns all potential values for a label name.
 	// It is not safe to use the strings beyond the lifefime of the querier.
-	LabelValues(name string) ([]string, Warnings, error)
+	LabelValues(hints *LabelValuesHints, name string) ([]string, Warnings, error)
 
 	// LabelNames returns all the unique label names present in the block in sorted order.
-	LabelNames() ([]string, Warnings, error)
+	LabelNames(hints *LabelNamesHints) ([]string, Warnings, error)
 
 	// Close releases the resources of the Querier.
 	Close() error
@@ -116,6 +116,16 @@ type SelectHints struct {
 	Grouping []string // List of label names used in aggregation.
 	By       bool     // Indicate whether it is without or by.
 	Range    int64    // Range vector selector range in milliseconds.
+
+	PartialAllowed bool // If true, select can return partial response, as long as warnings are provided in such case.
+}
+
+type LabelValuesHints struct {
+	PartialAllowed bool // If true, request can return partial response, as long as warnings are provided in such case.
+}
+
+type LabelNamesHints struct {
+	PartialAllowed bool // If true, request can return partial response, as long as warnings are provided in such case.
 }
 
 // TODO(bwplotka): Move to promql/engine_test.go?

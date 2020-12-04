@@ -116,6 +116,9 @@ type Query interface {
 	Stats() *stats.QueryTimers
 	// Cancel signals that a running query execution should be aborted.
 	Cancel()
+	// EnablePartialResponse enables subsequent Exec invokes to return partial responses without error.
+	// In that case any return warning will indicate partial response.
+	EnablePartialResponse()
 }
 
 // query implements the Query interface.
@@ -135,9 +138,17 @@ type query struct {
 
 	// The engine against which the query is executed.
 	ng *Engine
+
+	partialAllowed bool
 }
 
 type QueryOrigin struct{}
+
+// EnablePartialResponse enables subsequent Exec invokes to return partial responses without error.
+// In that case any return warning will indicate partial response.
+func (q *query) EnablePartialResponse() {
+	q.partialAllowed = true
+}
 
 // Statement implements the Query interface.
 func (q *query) Statement() parser.Statement {
@@ -485,7 +496,7 @@ func (ng *Engine) execEvalStmt(ctx context.Context, query *query, s *parser.Eval
 	}
 	defer querier.Close()
 
-	ng.populateSeries(querier, s)
+	ng.populateSeries(querier, s, query.partialAllowed)
 	prepareSpanTimer.Finish()
 
 	evalSpanTimer, ctxInnerEval := query.stats.GetSpanTimer(ctx, stats.InnerEvalTime, ng.metrics.queryInnerEval)
@@ -617,7 +628,7 @@ func (ng *Engine) findMinTime(s *parser.EvalStmt) time.Time {
 	return s.Start.Add(-maxOffset)
 }
 
-func (ng *Engine) populateSeries(querier storage.Querier, s *parser.EvalStmt) {
+func (ng *Engine) populateSeries(querier storage.Querier, s *parser.EvalStmt, partialAllowed bool) {
 	// Whenever a MatrixSelector is evaluated, evalRange is set to the corresponding range.
 	// The evaluation of the VectorSelector inside then evaluates the given range and unsets
 	// the variable.
@@ -627,9 +638,10 @@ func (ng *Engine) populateSeries(querier storage.Querier, s *parser.EvalStmt) {
 		switch n := node.(type) {
 		case *parser.VectorSelector:
 			hints := &storage.SelectHints{
-				Start: timestamp.FromTime(s.Start),
-				End:   timestamp.FromTime(s.End),
-				Step:  durationMilliseconds(s.Interval),
+				Start:          timestamp.FromTime(s.Start),
+				End:            timestamp.FromTime(s.End),
+				Step:           durationMilliseconds(s.Interval),
+				PartialAllowed: partialAllowed,
 			}
 
 			// We need to make sure we select the timerange selected by the subquery.

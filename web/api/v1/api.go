@@ -357,6 +357,14 @@ func (api *API) query(r *http.Request) (result apiFuncResult) {
 		defer cancel()
 	}
 
+	partialRespEnabled := false
+	if v := r.FormValue("partial_response"); v != "" {
+		partialRespEnabled, err = strconv.ParseBool(v)
+		if err != nil {
+			return invalidParamError(errors.Wrapf(err, "unable to parse boolean"), "partial_response")
+		}
+	}
+
 	qry, err := api.QueryEngine.NewInstantQuery(api.Queryable, r.FormValue("query"), ts)
 	if err != nil {
 		return invalidParamError(err, "query")
@@ -370,6 +378,10 @@ func (api *API) query(r *http.Request) (result apiFuncResult) {
 			qry.Close()
 		}
 	}()
+
+	if partialRespEnabled {
+		qry.EnablePartialResponse()
+	}
 
 	ctx = httputil.ContextFromRequest(ctx, r)
 
@@ -432,6 +444,14 @@ func (api *API) queryRange(r *http.Request) (result apiFuncResult) {
 		defer cancel()
 	}
 
+	partialRespEnabled := false
+	if v := r.FormValue("partial_response"); v != "" {
+		partialRespEnabled, err = strconv.ParseBool(v)
+		if err != nil {
+			return invalidParamError(errors.Wrapf(err, "unable to parse boolean"), "partial_response")
+		}
+	}
+
 	qry, err := api.QueryEngine.NewRangeQuery(api.Queryable, r.FormValue("query"), start, end, step)
 	if err != nil {
 		return apiFuncResult{nil, &apiError{errorBadData, err}, nil, nil}
@@ -445,8 +465,11 @@ func (api *API) queryRange(r *http.Request) (result apiFuncResult) {
 		}
 	}()
 
-	ctx = httputil.ContextFromRequest(ctx, r)
+	if partialRespEnabled {
+		qry.EnablePartialResponse()
+	}
 
+	ctx = httputil.ContextFromRequest(ctx, r)
 	res := qry.Exec(ctx)
 	if res.Err != nil {
 		return apiFuncResult{nil, returnAPIError(res.Err), res.Warnings, qry.Close}
@@ -492,13 +515,21 @@ func (api *API) labelNames(r *http.Request) apiFuncResult {
 		return invalidParamError(err, "end")
 	}
 
+	partialRespEnabled := false
+	if v := r.FormValue("partial_response"); v != "" {
+		partialRespEnabled, err = strconv.ParseBool(v)
+		if err != nil {
+			return invalidParamError(errors.Wrapf(err, "unable to parse boolean"), "partial_response")
+		}
+	}
+
 	q, err := api.Queryable.Querier(r.Context(), timestamp.FromTime(start), timestamp.FromTime(end))
 	if err != nil {
 		return apiFuncResult{nil, &apiError{errorExec, err}, nil, nil}
 	}
 	defer q.Close()
 
-	names, warnings, err := q.LabelNames()
+	names, warnings, err := q.LabelNames(&storage.LabelNamesHints{PartialAllowed: partialRespEnabled})
 	if err != nil {
 		return apiFuncResult{nil, &apiError{errorExec, err}, warnings, nil}
 	}
@@ -525,6 +556,14 @@ func (api *API) labelValues(r *http.Request) (result apiFuncResult) {
 		return invalidParamError(err, "end")
 	}
 
+	partialRespEnabled := false
+	if v := r.FormValue("partial_response"); v != "" {
+		partialRespEnabled, err = strconv.ParseBool(v)
+		if err != nil {
+			return invalidParamError(errors.Wrapf(err, "unable to parse boolean"), "partial_response")
+		}
+	}
+
 	q, err := api.Queryable.Querier(r.Context(), timestamp.FromTime(start), timestamp.FromTime(end))
 	if err != nil {
 		return apiFuncResult{nil, &apiError{errorExec, err}, nil, nil}
@@ -541,7 +580,7 @@ func (api *API) labelValues(r *http.Request) (result apiFuncResult) {
 		q.Close()
 	}
 
-	vals, warnings, err := q.LabelValues(name)
+	vals, warnings, err := q.LabelValues(&storage.LabelValuesHints{PartialAllowed: partialRespEnabled}, name)
 	if err != nil {
 		return apiFuncResult{nil, &apiError{errorExec, err}, warnings, closer}
 	}
@@ -586,10 +625,19 @@ func (api *API) series(r *http.Request) (result apiFuncResult) {
 		matcherSets = append(matcherSets, matchers)
 	}
 
+	partialRespEnabled := false
+	if v := r.FormValue("partial_response"); v != "" {
+		partialRespEnabled, err = strconv.ParseBool(v)
+		if err != nil {
+			return invalidParamError(errors.Wrapf(err, "unable to parse boolean"), "partial_response")
+		}
+	}
+
 	q, err := api.Queryable.Querier(r.Context(), timestamp.FromTime(start), timestamp.FromTime(end))
 	if err != nil {
 		return apiFuncResult{nil, &apiError{errorExec, err}, nil, nil}
 	}
+
 	// From now on, we must only return with a finalizer in the result (to
 	// be called by the caller) or call q.Close ourselves (which is required
 	// in the case of a panic).
@@ -603,9 +651,10 @@ func (api *API) series(r *http.Request) (result apiFuncResult) {
 	}
 
 	hints := &storage.SelectHints{
-		Start: timestamp.FromTime(start),
-		End:   timestamp.FromTime(end),
-		Func:  "series", // There is no series function, this token is used for lookups that don't need samples.
+		Start:          timestamp.FromTime(start),
+		End:            timestamp.FromTime(end),
+		Func:           "series", // There is no series function, this token is used for lookups that don't need samples.
+		PartialAllowed: partialRespEnabled,
 	}
 
 	var sets []storage.SeriesSet
